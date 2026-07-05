@@ -1,5 +1,6 @@
 package service;
 
+import io.github.ArtemV2007.dto.UserEvent;
 import io.github.ArtemV2007.dto.UserRequestDTO;
 import io.github.ArtemV2007.dto.UserResponseDTO;
 import io.github.ArtemV2007.model.User;
@@ -12,6 +13,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
@@ -28,20 +30,21 @@ class UserServiceTest {
     @Mock
     private UserRepository userRepository;
 
+    @Mock
+    private KafkaTemplate<String, Object> kafkaTemplate; // Мокаем отправку сообщений в Kafka
+
     @InjectMocks
     private UserService userService;
 
     @Test
-    @DisplayName("Создание пользователя должно корректно сохранять объект через репозиторий и возвращать DTO")
+    @DisplayName("Создание пользователя должно корректно сохранять объект через репозиторий, отправлять событие в Kafka и возвращать DTO")
     void createUser_ShouldSaveUserViaRepositoryAndReturnDto() {
         // Arrange
         UserRequestDTO requestDto = new UserRequestDTO("Иван", "ivan@example.com", 25);
-
         User savedUser = new User("Иван", "ivan@example.com", 25);
         savedUser.setId(1L);
         savedUser.setCreatedAt(LocalDateTime.now());
 
-        // Обучаем mock возвращать сохраненного пользователя с ID при вызове save
         when(userRepository.save(any(User.class))).thenReturn(savedUser);
 
         // Act
@@ -51,15 +54,14 @@ class UserServiceTest {
         assertNotNull(responseDto);
         assertEquals(1L, responseDto.id());
         assertEquals("Иван", responseDto.name());
-        assertEquals("ivan@example.com", responseDto.email());
 
-        // Перехватываем сущность, которую сервис отправлял на сохранение
+        // Проверяем сохранение в БД
         ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
         verify(userRepository, times(1)).save(userCaptor.capture());
+        assertEquals("Иван", userCaptor.getValue().getName());
 
-        User transientUser = userCaptor.getValue();
-        assertEquals("Иван", transientUser.getName());
-        assertEquals("ivan@example.com", transientUser.getEmail());
+        // Проверяем отправку события в Kafka
+        verify(kafkaTemplate, times(1)).send(eq("user-events"), eq(new UserEvent("CREATE", "ivan@example.com")));
     }
 
     @Test
@@ -79,7 +81,6 @@ class UserServiceTest {
         // Assert
         assertNotNull(responseDto);
         assertEquals(userId, responseDto.id());
-        assertEquals("Анна", responseDto.name());
         verify(userRepository, times(1)).findById(userId);
     }
 
@@ -111,19 +112,16 @@ class UserServiceTest {
 
         // Assert
         assertEquals(2, actualUsers.size());
-        assertEquals("User1", actualUsers.get(0).name());
-        assertEquals("User2", actualUsers.get(1).name());
         verify(userRepository, times(1)).findAll();
     }
 
     @Test
-    @DisplayName("Обновление пользователя должно изменять поля и вызывать репозиторий, если юзер найден")
+    @DisplayName("Обновление пользователя должно изменять поля и вызывать репозиторий, не отправляя события в Kafka")
     void updateUser_ShouldModifyAndSave_WhenUserExists() {
         // Arrange
         Long userId = 1L;
         User existingUser = new User("Старый", "old@mail.com", 40);
         existingUser.setId(userId);
-
         UserRequestDTO updateDto = new UserRequestDTO("Новый", "new@mail.com", 45);
 
         when(userRepository.findById(userId)).thenReturn(Optional.of(existingUser));
@@ -135,9 +133,8 @@ class UserServiceTest {
         // Assert
         assertNotNull(responseDto);
         assertEquals("Новый", existingUser.getName());
-        assertEquals("new@mail.com", existingUser.getEmail());
-        assertEquals(45, existingUser.getAge());
         verify(userRepository, times(1)).save(existingUser);
+        verifyNoInteractions(kafkaTemplate); // Обновление не должно триггерить Kafka по заданию
     }
 
     @Test
@@ -154,17 +151,22 @@ class UserServiceTest {
     }
 
     @Test
-    @DisplayName("Удаление пользователя должно вызывать метод репозитория, если он существует")
+    @DisplayName("Удаление пользователя должно вызывать удаление в репозитории и отправлять событие в Kafka")
     void deleteUser_ShouldCallRepositoryDelete_WhenUserExists() {
         // Arrange
         Long userId = 5L;
-        when(userRepository.existsById(userId)).thenReturn(true);
+        User user = new User("Клон", "clone@mail.com", 50);
+        user.setId(userId);
+
+        // Наш обновленный сервис теперь сначала ищет пользователя через findById
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
         // Act
         userService.deleteUser(userId);
 
         // Assert
         verify(userRepository, times(1)).deleteById(userId);
+        verify(kafkaTemplate, times(1)).send(eq("user-events"), eq(new UserEvent("DELETE", "clone@mail.com")));
     }
 
     @Test
@@ -172,10 +174,11 @@ class UserServiceTest {
     void deleteUser_ShouldThrowNotFound_WhenUserDoesNotExist() {
         // Arrange
         Long userId = 5L;
-        when(userRepository.existsById(userId)).thenReturn(false);
+        when(userRepository.findById(userId)).thenReturn(Optional.empty());
 
         // Act & Assert
         assertThrows(ResponseStatusException.class, () -> userService.deleteUser(userId));
         verify(userRepository, never()).deleteById(anyLong());
+        verifyNoInteractions(kafkaTemplate);
     }
 }

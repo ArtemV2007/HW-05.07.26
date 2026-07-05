@@ -1,10 +1,12 @@
 package io.github.ArtemV2007.service;
 
+import io.github.ArtemV2007.dto.UserEvent;
 import io.github.ArtemV2007.dto.UserRequestDTO;
 import io.github.ArtemV2007.dto.UserResponseDTO;
 import io.github.ArtemV2007.model.User;
 import io.github.ArtemV2007.repository.UserRepository;
 import org.springframework.http.HttpStatus;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -16,10 +18,15 @@ import java.util.stream.Collectors;
 public class UserService {
 
     private final UserRepository userRepository;
+    private final KafkaTemplate<String, Object> kafkaTemplate;
 
-    // Spring автоматически внедрит UserRepository через конструктор
-    public UserService(UserRepository userRepository) {
+    // Имя топика в Kafka
+    private static final String TOPIC = "user-events";
+
+    // Spring автоматически внедрит зависимости через конструктор
+    public UserService(UserRepository userRepository, KafkaTemplate<String, Object> kafkaTemplate) {
         this.userRepository = userRepository;
+        this.kafkaTemplate = kafkaTemplate;
     }
 
     @Transactional
@@ -30,10 +37,13 @@ public class UserService {
         user.setAge(dto.age());
 
         User savedUser = userRepository.save(user);
+
+        // Отправляем событие CREATE в Kafka после успешного сохранения
+        kafkaTemplate.send(TOPIC, new UserEvent("CREATE", savedUser.getEmail()));
+
         return mapToResponseDTO(savedUser);
     }
 
-    // Перегруженный метод специально для обратной совместимости со старым Main (консолью)
     @Transactional
     public UserResponseDTO createUser(String name, String email, Integer age) {
         return createUser(new UserRequestDTO(name, email, age));
@@ -61,12 +71,10 @@ public class UserService {
         user.setName(dto.name());
         user.setEmail(dto.email());
         user.setAge(dto.age());
-
         User updatedUser = userRepository.save(user);
         return mapToResponseDTO(updatedUser);
     }
 
-    // Перегруженный метод для консольного интерфейса Main
     @Transactional
     public void updateUser(Long id, String newName, String newEmail, Integer newAge) {
         try {
@@ -78,13 +86,16 @@ public class UserService {
 
     @Transactional
     public void deleteUser(Long id) {
-        if (!userRepository.existsById(id)) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Пользователь с ID " + id + " не найден!");
-        }
+        // Сначала находим пользователя, чтобы получить его email для отправки уведомления
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Пользователь с ID " + id + " не найден!"));
+
         userRepository.deleteById(id);
+
+        // Отправляем событие DELETE в Kafka после успешного удаления
+        kafkaTemplate.send(TOPIC, new UserEvent("DELETE", user.getEmail()));
     }
 
-    // Вспомогательный метод для маппинга Entity -> DTO
     private UserResponseDTO mapToResponseDTO(User user) {
         return new UserResponseDTO(
                 user.getId(),

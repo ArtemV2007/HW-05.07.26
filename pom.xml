@@ -20,8 +20,9 @@
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <!-- Версии Testcontainers и Postgres выносим отдельно, если нужно переопределить родительские -->
+        <!-- Версии внешних библиотек для тестирования -->
         <testcontainers.version>1.20.1</testcontainers.version>
+        <greenmail.version>2.1.1</greenmail.version>
     </properties>
 
     <dependencies>
@@ -43,15 +44,24 @@
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
 
+        <!-- Spring Kafka: библиотека для интеграции с Apache Kafka -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
+        </dependency>
+
+        <!-- Spring Boot Mail: стартер для работы с JavaMailSender и отправки писем -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
+        </dependency>
+
         <!-- Драйвер PostgreSQL (версия управляется через parent) -->
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
             <scope>runtime</scope>
         </dependency>
-
-        <!-- Логирование (Logback и SLF4J) уже встроено в стартеры Spring Boot,
-             отдельная зависимость logback-classic больше не требуется -->
 
         <!-- ТЕСТИРОВАНИЕ -->
         <!-- Spring Boot Test: автоматически включает JUnit 5, Mockito, AssertJ и MockMvc -->
@@ -72,6 +82,14 @@
             <groupId>org.testcontainers</groupId>
             <artifactId>postgresql</artifactId>
             <version>${testcontainers.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- GreenMail: встроенный SMTP-сервер для интеграционного тестирования отправки писем -->
+        <dependency>
+            <groupId>com.icegreen</groupId>
+            <artifactId>greenmail-junit5</artifactId>
+            <version>${greenmail.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
