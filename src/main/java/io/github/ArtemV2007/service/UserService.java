@@ -5,6 +5,8 @@ import io.github.ArtemV2007.dto.UserRequestDTO;
 import io.github.ArtemV2007.dto.UserResponseDTO;
 import io.github.ArtemV2007.model.User;
 import io.github.ArtemV2007.repository.UserRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
@@ -17,13 +19,13 @@ import java.util.stream.Collectors;
 @Service
 public class UserService {
 
+    // Инициализируем стандартный логгер SLF4J
+    private static final Logger logger = LoggerFactory.getLogger(UserService.class);
+
     private final UserRepository userRepository;
     private final KafkaTemplate<String, Object> kafkaTemplate;
-
-    // Имя топика в Kafka
     private static final String TOPIC = "user-events";
 
-    // Spring автоматически внедрит зависимости через конструктор
     public UserService(UserRepository userRepository, KafkaTemplate<String, Object> kafkaTemplate) {
         this.userRepository = userRepository;
         this.kafkaTemplate = kafkaTemplate;
@@ -37,10 +39,7 @@ public class UserService {
         user.setAge(dto.age());
 
         User savedUser = userRepository.save(user);
-
-        // Отправляем событие CREATE в Kafka после успешного сохранения
         kafkaTemplate.send(TOPIC, new UserEvent("CREATE", savedUser.getEmail()));
-
         return mapToResponseDTO(savedUser);
     }
 
@@ -80,19 +79,17 @@ public class UserService {
         try {
             updateUser(id, new UserRequestDTO(newName, newEmail, newAge));
         } catch (ResponseStatusException e) {
-            System.out.println(e.getReason());
+            // ИСПРАВЛЕНО: заменено System.out на logger.error
+            logger.error("Ошибка при обновлении пользователя в консольном режиме: {}", e.getReason());
         }
     }
 
     @Transactional
     public void deleteUser(Long id) {
-        // Сначала находим пользователя, чтобы получить его email для отправки уведомления
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Пользователь с ID " + id + " не найден!"));
 
         userRepository.deleteById(id);
-
-        // Отправляем событие DELETE в Kafka после успешного удаления
         kafkaTemplate.send(TOPIC, new UserEvent("DELETE", user.getEmail()));
     }
 
